@@ -131,18 +131,29 @@ function localDayKey(ms) {
   return `${y}-${m}-${day}`;
 }
 
-function activitySeries(rows, days = 21) {
+function activitySeries(rows) {
+  const valid = rows.filter((row) => Number(row.updated_at) > 0);
+  if (!valid.length) return [];
+  const floor = Date.now() - 730 * 24 * 60 * 60 * 1000;
+  const earliest = Math.max(floor, Math.min(...valid.map((row) => Number(row.updated_at))));
+  const start = new Date(earliest);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
   const map = new Map();
-  for (let i = days - 1; i >= 0; i -= 1) {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - i);
-    map.set(localDayKey(d.getTime()), { date: localDayKey(d.getTime()), label: `${d.getMonth() + 1}/${d.getDate()}`, total: 0, sources: {} });
+  for (let cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const key = localDayKey(cursor.getTime());
+    map.set(key, {
+      date: key,
+      label: `${cursor.getMonth() + 1}/${cursor.getDate()}`,
+      total: 0,
+      sources: {},
+    });
   }
-  for (const row of rows) {
-    const key = localDayKey(row.updated_at);
-    if (!map.has(key)) continue;
+  for (const row of valid) {
+    const key = localDayKey(Number(row.updated_at));
     const entry = map.get(key);
+    if (!entry) continue;
     entry.total += 1;
     entry.sources[row.source] = (entry.sources[row.source] || 0) + 1;
   }
@@ -158,9 +169,10 @@ function statsView() {
     projects: totals.projects || 0,
     messages: totals.messages || 0,
     tokens: totals.tokens || 0,
+    earliest: totals.earliest || 0,
     agents: sources.length,
     activeAgents: sources.filter((s) => s.session_count > 0).length,
-    activity: activitySeries(stats.activity, 21),
+    activity: activitySeries(stats.activity),
     bySource: stats.sources,
     recent: stats.recent,
   };

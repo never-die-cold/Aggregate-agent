@@ -61,6 +61,7 @@ const state = {
   route: 'overview',
   sync: null,
   theme: localStorage.getItem('agenthub.theme') || 'system',
+  chartRange: localStorage.getItem('agenthub.chartRange') || 'all',
   sessions: {
     items: [],
     total: 0,
@@ -168,6 +169,7 @@ function relative(ms) {
 }
 
 function dayLabel(ms) {
+  if (!ms) return '时间未知';
   const date = new Date(ms);
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -399,6 +401,28 @@ function statDelta(activity) {
   return recent - previous;
 }
 
+function bucketActivity(activity, range) {
+  const all = Array.isArray(activity) ? activity : [];
+  if (range !== 'all') {
+    const count = Number(range) || 21;
+    return all.slice(-count);
+  }
+  const buckets = [];
+  for (let index = 0; index < all.length; index += 7) {
+    const chunk = all.slice(index, index + 7);
+    const sources = {};
+    let total = 0;
+    for (const day of chunk) {
+      total += day.total;
+      for (const [source, value] of Object.entries(day.sources || {})) {
+        sources[source] = (sources[source] || 0) + value;
+      }
+    }
+    buckets.push({ date: chunk[0].date, label: chunk[0].label, total, sources });
+  }
+  return buckets;
+}
+
 function renderActivityChart(activity) {
   const days = activity || [];
   const width = 640;
@@ -411,7 +435,7 @@ function renderActivityChart(activity) {
   const plotHeight = bottom - top;
   const max = Math.max(1, ...days.map((day) => day.total));
   const step = plotWidth / Math.max(1, days.length);
-  const barWidth = Math.max(5, Math.min(16, step * 0.52));
+  const barWidth = Math.max(5, Math.min(20, step * 0.52));
   const sources = [...new Set(days.flatMap((day) => Object.keys(day.sources)))];
   const grid = [0, 0.5, 1].map((ratio) => {
     const y = bottom - plotHeight * ratio;
@@ -432,14 +456,15 @@ function renderActivityChart(activity) {
     return segments.join('');
   }).join('');
 
+  const labelEvery = days.length > 60 ? 10 : days.length > 30 ? 6 : 4;
   const labels = days.map((day, index) => {
-    if (index % 4 !== 0 && index !== days.length - 1) return '';
+    if (index % labelEvery !== 0 && index !== days.length - 1) return '';
     const x = left + index * step + step / 2;
     return `<text class="chart-label" x="${x.toFixed(1)}" y="${height - 6}" text-anchor="middle">${escapeHtml(day.label)}</text>`;
   }).join('');
 
   const maxLabel = `<text class="chart-total" x="${left + 18}" y="${top + 4}">${max}</text>`;
-  return `<svg class="activity-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="近三周各智能体会话活跃度">${grid}${bars}${labels}${maxLabel}</svg>`;
+  return `<svg class="activity-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="各智能体会话活跃度">${grid}${bars}${labels}${maxLabel}</svg>`;
 }
 
 function renderOverview() {
@@ -453,6 +478,15 @@ function renderOverview() {
   const dateLabel = now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' });
   const activeSources = sources.filter((source) => source.sessionCount > 0);
   const bySource = new Map((stats.bySource || []).map((row) => [row.source, row]));
+  const chartDays = bucketActivity(stats.activity, state.chartRange);
+  const dated = (stats.activity || []).filter((day) => day.total > 0);
+  const chartStart = chartDays[0]?.date || '';
+  const chartEnd = state.chartRange === 'all' ? dated[dated.length - 1]?.date || '' : chartDays[chartDays.length - 1]?.date || '';
+  const chartSpan = chartStart && chartEnd
+    ? `${new Date(chartStart).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} – ${new Date(chartEnd).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}`
+    : '';
+  const chartLabel = state.chartRange === 'all' ? '全部历史' : `近 ${state.chartRange} 天`;
+  const ranges = [['7', '7天'], ['21', '21天'], ['90', '90天'], ['all', '全部']];
 
   const orbitAgents = activeSources.slice(0, 5).map((source, index) => {
     const positions = [
@@ -519,10 +553,13 @@ function renderOverview() {
         <section class="panel activity-panel">
           <div class="panel-head">
             <h2>会话活跃度</h2>
-            <span class="link">近 21 天 ${icon('activity')}</span>
+            <div class="chart-range" role="group" aria-label="图表区间">
+              ${ranges.map(([value, label]) => `<button class="chip ${state.chartRange === value ? 'is-active' : ''}" data-chart-range="${value}">${label}</button>`).join('')}
+            </div>
           </div>
           <div class="legend">${sources.map((source) => `<span class="legend-item" style="--agent:${color(source.color)}"><i class="legend-dot"></i>${escapeHtml(source.shortName)}</span>`).join('')}</div>
-          <div class="chart-wrap">${renderActivityChart(stats.activity)}</div>
+          <div class="chart-wrap">${renderActivityChart(chartDays)}</div>
+          <div class="chart-foot"><span>${escapeHtml(chartLabel)}${chartSpan ? ` · ${escapeHtml(chartSpan)}` : ''}</span><span>图表区间不影响会话库，更早记录始终保留</span></div>
         </section>
 
         <section class="panel">
@@ -591,6 +628,13 @@ function renderOverview() {
 }
 
 function wireOverview() {
+  view.querySelectorAll('[data-chart-range]').forEach((el) => {
+    el.addEventListener('click', () => {
+      state.chartRange = el.dataset.chartRange;
+      localStorage.setItem('agenthub.chartRange', state.chartRange);
+      renderOverview();
+    });
+  });
   view.querySelectorAll('[data-route]').forEach((el) => {
     el.addEventListener('click', (event) => {
       event.preventDefault();
@@ -652,7 +696,7 @@ async function renderSessions() {
       <div class="sessions-layout">
         <section class="panel session-list-panel">
           <div class="list-toolbar">
-            <span class="count">共 <strong id="list-total">${fmtNum(state.sessions.total)}</strong> 段</span>
+            <span class="count">共 <strong id="list-total">${fmtNum(state.sessions.total)}</strong> 段${state.data.stats.earliest ? ` · 最早 ${fmtDate(state.data.stats.earliest)}` : ''}</span>
             <span class="count" id="list-filter-label">${escapeHtml(filterSummary().label)}</span>
           </div>
           <div class="session-scroll" id="session-scroll">
