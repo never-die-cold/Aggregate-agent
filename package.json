@@ -1,0 +1,17 @@
+{
+  "name": "agenthub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first session hub for ChatGPT/Codex, Kimi Code, ZCode, OpenCode and DeepSeek Harness.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "start:no-open": "node server.js --no-open",
+    "dev": "node --watch server.js --no-open",
+    "reindex": "node server.js --reindex --no-open"
+  }
+}

@@ -1,0 +1,26 @@
+# 本地索引与会话数据 — 绝不提交
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 本机工具、截图、临时浏览器配置
+tools/
+screenshots/
+.edge-profile/
+*.png
+
+# 依赖与系统文件
+node_modules/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+
+# 环境与本地配置
+.env
+.env.*
+config.local.json
