@@ -68,6 +68,10 @@ function sessionView(row, { withSnippet = false } = {}) {
     indexedAt: row.indexed_at || 0,
     sourcePath: row.source_path || '',
     archived: !!row.archived,
+    parentId: row.parent_id || '',
+    parentNativeId: row.parent_native_id || '',
+    parentTitle: row.parent_title || '',
+    childCount: Number(row.child_count) || 0,
     messageCount: row.message_count || 0,
     tokens: row.tokens || 0,
     cost: row.cost || 0,
@@ -317,6 +321,77 @@ const server = http.createServer(async (req, res) => {
       });
       return;
     }
+    if (pathname.startsWith('/api/sessions/') && pathname.endsWith('/live') && method === 'GET') {
+      const id = pathname.slice('/api/sessions/'.length, pathname.length - '/live'.length);
+      const session = db.getSession(id);
+      if (!session) {
+        sendJson(res, 404, { error: 'session_not_found' });
+        return;
+      }
+      // Server-side watcher for this specific session.
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      res.write(': connected\n\n');
+      let serving = true;
+      let lastMessaged = session.message_count || 0;
+      let snapshotSent = false;
+      const client = () => {
+        if (!serving) return;
+        const fresh = db.getSession(id);
+        if (!fresh) return;
+        try {
+          if (!snapshotSent) {
+            res.write(`data: ${JSON.stringify({ type: 'snapshot', messages: fresh.messages.map(messageView), session: sessionView(fresh) })}\n\n`);
+            snapshotSent = true;
+          } else if (fresh.message_count > lastMessaged) {
+            const rows = fresh.messages.slice(lastMessaged);
+            res.write(`data: ${JSON.stringify({ type: 'append', messages: rows.map(messageView), session: sessionView(fresh) })}\n\n`);
+          } else if (fresh.message_count < lastMessaged) {
+            res.write(`data: ${JSON.stringify({ type: 'clear', messages: fresh.messages.map(messageView), session: sessionView(fresh) })}\n\n`);
+          } else {
+            res.write(`data: ${JSON.stringify({ type: 'heartbeat', updatedAt: fresh.updated_at })}\n\n`);
+          }
+          lastMessaged = fresh.message_count;
+        } catch {
+          serving = false;
+        }
+      };
+      client();
+      const interval = setInterval(() => {
+        sync.syncSession(id).then((result) => {
+          if (result.changed && serving) {
+            if (result.session.message_count === lastMessaged) {
+              // Content changed with identical count (e.g. tool result replaced) — refresh the whole payload.
+              res.write(`data: ${JSON.stringify({ type: 'snapshot', messages: result.session.messages.map(messageView), session: sessionView(result.session) })}\n\n`);
+            } else {
+              client();
+            }
+          }
+        }).catch((error) => console.error('[live-trace]', error));
+      }, 3000);
+      req.on('close', () => {
+        serving = false;
+        clearInterval(interval);
+      });
+      return;
+    }
+    if (pathname.startsWith('/api/sessions/') && pathname.endsWith('/tree')) {
+      const id = pathname.slice('/api/sessions/'.length, pathname.length - '/tree'.length);
+      const session = db.getSession(id);
+      if (!session) {
+        sendJson(res, 404, { error: 'session_not_found' });
+        return;
+      }
+      const relations = db.getSessionRelations(id);
+      const parent = relations.parent ? sessionView(relations.parent) : null;
+      const children = relations.children.map(sessionView);
+      sendJson(res, 200, { parent, children });
+      return;
+    }
     if (pathname.startsWith('/api/sessions/')) {
       const id = pathname.slice('/api/sessions/'.length);
       const session = db.getSession(id);
@@ -326,10 +401,17 @@ const server = http.createServer(async (req, res) => {
       }
       const adapter = adapterById.get(session.source);
       const view = sessionView(session);
+      const relations = db.getSessionRelations(id);
+      const parent = relations.parent ? sessionView(relations.parent) : null;
+      const children = relations.children.map(sessionView);
+      view.parentTitle = parent?.title || '';
+      view.childCount = children.length;
       const meta = { ...view, nativeId: session.native_id, sourcePath: session.source_path };
       sendJson(res, 200, {
         session: view,
         messages: session.messages.map(messageView),
+        parent,
+        children,
         commands: {
           resume: adapter?.resumeCommand?.(meta) || null,
           sourceFolder: adapter?.sourceFolder?.(meta) || meta.sourcePath || '',

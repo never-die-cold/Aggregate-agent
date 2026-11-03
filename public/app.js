@@ -74,6 +74,10 @@ const state = {
   selectedLoading: false,
   showReasoning: false,
   detailOpen: false,
+  liveId: null,
+  liveSource: null,
+  liveActive: false,
+  lastLiveHeartbeat: 0,
   palette: {
     open: false,
     q: '',
@@ -277,6 +281,7 @@ async function handleRoute() {
   const { path, params } = parseHash();
   state.route = path;
   setActiveNav(path);
+  if (path !== 'sessions') closeLive();
 
   if (path === 'overview') {
     breadcrumb.textContent = '总览';
@@ -781,16 +786,17 @@ function renderSessionRows() {
       lastDay = label;
     }
     const active = state.selected?.id === item.id ? ' is-active' : '';
-    html += `<button class="session-row${active}" data-session="${attr(item.id)}">
+    const child = !!item.parentId;
+    html += `<button class="session-row${active}${child ? ' is-child' : ''}" data-session="${attr(item.id)}">
       ${sourceBadge(item.source)}
       <div class="session-row-main">
         <div class="session-row-top">
-          <span class="session-row-title">${escapeHtml(item.title || '未命名会话')}</span>
+          <span class="session-row-title">${child ? '<span class="child-mark">↳</span>' : ''}${escapeHtml(item.title || '未命名会话')}</span>
           <span class="session-row-time">${fmtTime(item.updatedAt)}</span>
         </div>
         <div class="session-row-sub"><span>${escapeHtml(sourceInfo(item.source).shortName)}</span><span>·</span><span class="path">${escapeHtml(item.projectName || item.projectPath || '未归类')}</span><span>·</span><span>${fmtNum(item.messageCount)} 条</span>${item.model ? `<span>·</span><span>${escapeHtml(shortModel(item.model))}</span>` : ''}</div>
         ${item.snippet ? `<div class="session-row-snippet">${highlightHtml(item.snippet, state.sessions.filters.q.split(/\s+/))}</div>` : ''}
-        <div class="session-row-meta">${statusTag(item.status)}${item.extra?.subagent ? '<span class="tag">子代理</span>' : ''}${item.archived ? '<span class="tag">归档</span>' : ''}${item.tokens ? `<span class="tag">${fmtCompact(item.tokens)} tokens</span>` : ''}</div>
+        <div class="session-row-meta">${statusTag(item.status)}${item.extra?.subagent ? '<span class="tag">子代理</span>' : ''}${item.childCount ? `<span class="tag tag-amber">+${fmtNum(item.childCount)}</span>` : ''}${item.archived ? '<span class="tag">归档</span>' : ''}${item.tokens ? `<span class="tag">${fmtCompact(item.tokens)} tokens</span>` : ''}${child ? `<span class="tag" title="${attr(item.parentTitle || '')}">${escapeHtml(item.parentTitle || '父会话')}</span>` : ''}</div>
       </div>
     </button>`;
   }
@@ -873,6 +879,7 @@ function bindSessionEvents() {
 }
 
 async function openSession(id) {
+  if (state.liveId && state.liveId !== id) closeLive();
   state.selectedLoading = true;
   state.detailOpen = true;
   const detail = document.getElementById('session-detail');
@@ -881,9 +888,16 @@ async function openSession(id) {
   detail.innerHTML = `<div class="detail-empty"><div class="boot"><div class="boot-mark"></div><p>正在读取会话…</p></div></div>`;
   try {
     const data = await api(`/api/sessions/${encodeURIComponent(id)}`);
-    state.selected = { ...data.session, messages: data.messages, commands: data.commands };
+    state.selected = {
+      ...data.session,
+      messages: data.messages,
+      commands: data.commands,
+      parent: data.parent || null,
+      children: data.children || [],
+    };
     state.showReasoning = false;
     renderDetail();
+    listenLive(id);
     document.querySelectorAll('[data-session]').forEach((el) => {
       el.classList.toggle('is-active', el.dataset.session === id);
     });
@@ -895,6 +909,67 @@ async function openSession(id) {
   }
 }
 
+function closeLive() {
+  if (state.liveSource) {
+    try { state.liveSource.close(); } catch { /* already closed */ }
+    state.liveSource = null;
+  }
+  state.liveId = null;
+  state.liveActive = false;
+  state.lastLiveHeartbeat = 0;
+}
+
+function listenLive(id) {
+  if (state.liveSource && state.liveId === id) {
+    state.liveActive = true;
+    return;
+  }
+  closeLive();
+  state.liveId = id;
+  try {
+    const source = new EventSource(`/api/sessions/${encodeURIComponent(id)}/live`);
+    state.liveSource = source;
+    state.liveActive = true;
+    source.onmessage = (event) => {
+      let payload;
+      try { payload = JSON.parse(event.data); } catch { return; }
+      if (!payload || payload.type === 'heartbeat') {
+        state.lastLiveHeartbeat = payload.updatedAt || Date.now();
+        return;
+      }
+      if (payload.session && state.selected?.id === payload.session.id) {
+        state.selected = {
+          ...state.selected,
+          ...payload.session,
+          messages: state.selected.messages,
+          commands: state.selected.commands,
+          parent: state.selected.parent,
+          children: state.selected.children,
+        };
+      }
+      if (payload.type === 'snapshot' || payload.type === 'clear') {
+        if (state.selected?.id === payload.session?.id) {
+          state.selected.messages = payload.messages || [];
+          renderDetail();
+        }
+      } else if (payload.type === 'append' && payload.messages?.length && state.selected?.id === payload.session?.id) {
+        state.selected.messages.push(...payload.messages);
+        if (state.route === 'sessions') renderDetail();
+      }
+    };
+    source.onopen = () => {
+      state.liveActive = true;
+      if (state.liveId === id) renderDetail();
+    };
+    source.onerror = () => {
+      state.liveActive = false;
+      if (state.liveId === id) renderDetail();
+    };
+  } catch (error) {
+    toast(`实时跟随失败：${error.message}`, true);
+  }
+}
+
 function renderDetail() {
   const detail = document.getElementById('session-detail');
   const session = state.selected;
@@ -903,18 +978,23 @@ function renderDetail() {
   const messages = session.messages || [];
   const visibleMessages = state.showReasoning ? messages : messages.filter((message) => message.kind !== 'reasoning');
   const textOnly = session.extra?.textOnly;
+  const oldBody = detail.querySelector('.detail-body');
+  const prevTop = oldBody?.scrollTop ?? 0;
+  const wasBottom = oldBody ? oldBody.scrollTop + oldBody.clientHeight >= oldBody.scrollHeight - 60 : false;
 
   detail.innerHTML = `
     <div class="detail-head">
       <div class="detail-topline">
-        <div class="detail-source">${sourceBadge(session.source)}<span class="source-name"><strong>${escapeHtml(source.name)}</strong></span>${statusTag(session.status)}${session.archived ? '<span class="tag">归档</span>' : ''}</div>
+        <div class="detail-source">${sourceBadge(session.source)}<span class="source-name"><strong>${escapeHtml(source.name)}</strong></span>${statusTag(session.status)}${session.archived ? '<span class="tag">归档</span>' : ''}${state.liveActive && state.liveId === session.id ? '<span class="tag tag-green">实时跟随</span>' : ''}</div>
         <button class="icon-btn detail-close" data-action="close-detail" aria-label="关闭详情">${icon('close')}</button>
       </div>
+      ${session.parent && session.parent.id ? `<button class="detail-parent" data-open-session="${attr(session.parent.id)}">${icon('layers')}<span>上级会话</span><strong>${escapeHtml(session.parent.title || session.parent.id)}</strong></button>` : ''}
       <h2>${escapeHtml(session.title || '未命名会话')}</h2>
       <div class="detail-path">${icon('folder')}<span>${escapeHtml(session.projectPath || (session.extra?.subagent ? '子代理线程' : '未归类项目'))}</span></div>
       <div class="detail-meta">
         <span class="tag">${fmtNum(session.messageCount)} 条消息</span>
         ${session.extra?.subagent ? '<span class="tag">子代理</span>' : ''}
+        ${session.childCount ? `<span class="tag tag-amber">${fmtNum(session.childCount)} 个子会话</span>` : ''}
         ${session.model ? `<span class="tag">${escapeHtml(shortModel(session.model))}</span>` : ''}
         ${session.tokens ? `<span class="tag">${fmtCompact(session.tokens)} tokens</span>` : ''}
         ${session.cost ? `<span class="tag">$${Number(session.cost).toFixed(3)}</span>` : ''}
@@ -925,6 +1005,15 @@ function renderDetail() {
         <button class="btn btn-sm" data-action="open-project">${icon('external')}项目目录</button>
         <button class="btn btn-sm" data-action="open-source">${icon('database')}数据目录</button>
       </div>
+      ${(session.children?.length || state.liveActive) ? `<div class="detail-tree">
+        ${session.children?.length ? `<div class="detail-tree-head">${icon('layers')}<span>子会话 ${fmtNum(session.children.length)} 条</span></div>
+        <div class="detail-tree-list">${session.children.map((child) => `
+          <button class="detail-tree-row" data-open-session="${attr(child.id)}">
+            ${sourceBadge(child.source)}
+            <span class="detail-tree-title">${escapeHtml(child.title || '未命名会话')}</span>
+            <span class="detail-tree-meta">${statusTag(child.status)}${escapeHtml(fmtTime(child.updatedAt))}</span>
+          </button>`).join('')}</div>` : ''}
+      </div>` : ''}
     </div>
     <div class="detail-body">
       ${textOnly ? `<div class="text-note">${icon('info')}<span>ZCode 本地索引保存的是拼接后的可检索文本，没有逐条消息结构。下面的记录仍可全文搜索，但角色边界可能不完整。</span></div>` : ''}
@@ -938,6 +1027,11 @@ function renderDetail() {
     </div>`;
   hydrateIcons(detail);
   bindDetailEvents();
+  requestAnimationFrame(() => {
+    const freshBody = detail.querySelector('.detail-body');
+    if (!freshBody) return;
+    freshBody.scrollTop = wasBottom ? freshBody.scrollHeight : prevTop;
+  });
 }
 
 function renderMessage(message) {
@@ -989,6 +1083,12 @@ function bindDetailEvents() {
   detail.querySelector('[data-action="close-detail"]')?.addEventListener('click', () => {
     detail.classList.remove('is-open');
     state.detailOpen = false;
+    closeLive();
+  });
+  detail.querySelectorAll('[data-open-session]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (el.dataset.openSession) openSession(el.dataset.openSession);
+    });
   });
   detail.querySelector('[data-action="toggle-reasoning"]')?.addEventListener('click', () => {
     state.showReasoning = !state.showReasoning;

@@ -14,6 +14,7 @@ ChatGPT / Codex、Kimi Code、ZCode、OpenCode、DeepSeek Harness 各自使用�
 - **全局搜索**：标题、项目路径、消息正文统一检索，`Ctrl/Cmd + K` 唤起命令面板。
 - **项目归并**：按工作目录把不同 Agent 的会话合并到同一个项目。
 - **会话回放**：用户消息、助手回复、思考过程、工具调用与命令输出分层展示。
+- **实时跟随 + 子代理树**：详情页单独打开一条 SSE；Codex / OpenCode 的子会话按父子关系连接，列表用 `+N` 与缩进标识。
 - **Agent 管理**：检测数据源、查看索引规模与最近扫描、单独重扫、暂停来源、打开原始目录。
 - **继续命令**：为 Codex / Kimi / OpenCode 生成对应 CLI 的 resume 命令，一键复制。
 - **本地优先**：Node.js 内置 SQLite 与 zstd，无数据库服务、无前端构建、无第三方运行时依赖。

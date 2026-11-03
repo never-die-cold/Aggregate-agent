@@ -132,7 +132,9 @@ FTS5 的 `unicode61` 无法对中文子串检索；`trigram` 要求至少 3 个�
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/bootstrap` | 启动数据：来源、统计、项目预览、同步状态 |
 | GET | `/api/sessions` | 会话列表；参数 `source/project/q/sort/archived/limit/offset` |
-| GET | `/api/sessions/:id` | 会话详情、消息、resume 命令、源目录 |
+| GET | `/api/sessions/:id` | 会话详情、消息、父/子会话、resume 命令、源目录 |
+| GET | `/api/sessions/:id/tree` | 直接父会话与子会话列表 |
+| GET | `/api/sessions/:id/live` | SSE：单会话实时跟随（3 秒检查 + full/append 事件） |
 | GET | `/api/projects` | 项目聚合 |
 | GET | `/api/sources` | 数据源状态 |
 | POST | `/api/sync` | 触发同步；`{source?, force?}` |
@@ -142,6 +144,13 @@ FTS5 的 `unicode61` 无法对中文子串检索；`trigram` 要求至少 3 个�
 | GET | `/api/events` | SSE：同步进度 |
 
 服务只监听 `127.0.0.1`，没有鉴权；它是个人本机工具，不应直接暴露到局域网或公网。
+
+### 4.1 实时跟随与子代理树
+
+- `lib/sync.js#syncSession(id)` 会对单个会话重新加载并比较消息签名；只有在消息数或正文变化时才入库。
+- `GET /api/sessions/:id/live` 是一条 SSE：3 秒调用一次 `syncSession`；若消息数变化则发 `append/clear`，若内容变化但数量不变则发 `snapshot`。
+- `sessions.parent_id / parent_native_id` 用来表达父子关系。Codex 读取 `thread_spawn.parent_thread_id`，OpenCode 读取 `parent_id`，ZCode 读取 `forked_from_task_id`，其它来源暂无父子信息。
+- 详情页顶部会把直接子会话渲染为可跳转的树块；会话库列表为子会话加缩进和 `↳`，父会话用 `+N` 标记子会话数量。
 
 ---
 
