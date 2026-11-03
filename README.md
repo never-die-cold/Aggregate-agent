@@ -167,11 +167,16 @@ export const adapter = {
 
 ## 同类项目参考
 
-- [Agent Viewer](https://github.com/Atituiset/agent-viewer) — Electron，多 Agent 会话浏览，支持 SSH/WSL，产品完成度很高。
-- [kept](https://github.com/egroup-labs/kept) — 面向 ChatGPT / Claude / Gemini / Grok / Kimi 的本地归档与回忆。
-- [llm-deep-trace](https://github.com/userFRM/llm-deep-trace) — 编码 Agent 的会话浏览器与追踪工具。
+- [Agent Viewer](https://github.com/Atituiset/agent-viewer) — Electron，多 Agent 会话浏览，支持 SSH/WSL、实时跟随和子 Agent 泳道。
+- [Sessions Viewer](https://github.com/jerrywu001/cc-sessions-viewer) — Tauri，内置聊天/恢复、导出、成本统计与 Skills/MCP/Hooks 管理。
+- [Agent Sessions](https://github.com/jazzyalex/agent-sessions) — macOS 原生，16 个 Agent、全文搜索、恢复与配额 burn rate。
+- [AgentSessionManager](https://github.com/zhuchongba-01/AgentSessionManager) — Tauri，含 ZCode/DSH 的会话管理与安全清理。
+- [kept](https://github.com/egroup-labs/kept) — 面向 ChatGPT / Claude / Gemini / Grok / Kimi 的本地归档与 MCP 回忆。
+- [llm-deep-trace](https://github.com/userFRM/llm-deep-trace) — 编码 Agent 的会话浏览器、子 Agent 树与实时 tail。
 
 AgentHub 的差异点：**无框架、无依赖的本地 Web 形态**，把“会话聚合”与“Agent 数据源管理”放在同一个面板，并且默认只读、零上传。
+
+完整对比、功能矩阵与分阶段提升路线见 [docs/COMPARISON.md](docs/COMPARISON.md)。
 
 ---
 
